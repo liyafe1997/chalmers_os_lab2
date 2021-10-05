@@ -24,6 +24,7 @@ static int64_t ticks;
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
 
+static void judge_ticks(struct thread *t, void *aux);
 static intr_handler_func timer_interrupt;
 static bool too_many_loops(unsigned loops);
 static void busy_wait(int64_t loops);
@@ -96,11 +97,10 @@ void timer_sleep(int64_t ticks)
   */
 
   struct thread *current = thread_current();
-  if (current != idle_thread)
+  if (current != NULL)
   {
-    current->time_to_wakeup = timer_ticks() + sleepticks;
-    current->status = THREAD_BLOCKED;
-    list_insert_ordered(&block_list, &cur->elem, thread_compare, NULL);
+    current->time_to_wakeup = timer_ticks() + ticks;
+    thread_block();
   }
 }
 
@@ -173,6 +173,16 @@ timer_interrupt(struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick();
+  int64_t current_time = timer_ticks();
+  thread_foreach(judge_ticks, &current_time);
+}
+
+void judge_ticks(struct thread *t, void *aux)
+{
+  if(t->time_to_wakeup != 0 && t->time_to_wakeup <= *((int64_t*)aux)){
+    thread_unblock(t);
+  }
+  // not yet start
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
