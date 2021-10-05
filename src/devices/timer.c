@@ -93,14 +93,17 @@ void timer_sleep(int64_t ticks)
   ASSERT (intr_get_level () == INTR_ON);
   while (timer_elapsed (start) < ticks) 
     thread_yield ();
-    
   */
+  enum intr_level old_level;
 
+  
   struct thread *current = thread_current();
   if (current != NULL)
   {
+    old_level = intr_disable();
     current->time_to_wakeup = timer_ticks() + ticks;
     thread_block();
+    intr_set_level(old_level);
   }
 }
 
@@ -179,7 +182,7 @@ timer_interrupt(struct intr_frame *args UNUSED)
 
 void judge_ticks(struct thread *t, void *aux)
 {
-  if(t->time_to_wakeup != 0 && t->time_to_wakeup <= *((int64_t*)aux)){
+  if(t->status==THREAD_BLOCKED && t->time_to_wakeup != 0 && t->time_to_wakeup <= *((int64_t*)aux)){
     thread_unblock(t);
   }
   // not yet start
