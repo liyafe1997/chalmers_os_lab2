@@ -194,7 +194,9 @@ static void
 judge_ticks (struct thread *t, void *aux)
 {
   if(t->status==THREAD_BLOCKED && t->time_to_wakeup != 0 && t->time_to_wakeup <= *((int64_t*)aux)){
+    t->time_to_wakeup = 0;
     thread_unblock(t);
+    return;
   }
   // not yet start
 }
