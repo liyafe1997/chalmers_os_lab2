@@ -14,6 +14,19 @@
 #define NORMAL 0
 #define HIGH 1
 
+// new varibles
+struct semaphore bus_inuse;
+struct semaphore bus_timeslot;
+struct semaphore high_prio;
+struct semaphore low_prio;
+struct semaphore number_lock;
+struct semaphore wakeup_lock;
+
+
+int bus_direction;
+int high_num;
+int same_direction;
+int other_direction;
 /*
  *	initialize task with direction and priority
  *	call o
@@ -22,6 +35,7 @@ typedef struct {
 	int direction;
 	int priority;
 } task_t;
+
 
 void batchScheduler(unsigned int num_tasks_send, unsigned int num_task_receive,
         unsigned int num_priority_send, unsigned int num_priority_receive);
@@ -43,7 +57,17 @@ void oneTask(task_t task);/*Task requires to use the bus and executes methods be
 void init_bus(void){ 
  
     random_init((unsigned int)123456789); 
+    sema_init(&bus_inuse, 1);
+    sema_init(&bus_timeslot, BUS_CAPACITY);
+    sema_init(&high_prio, 1);
+    sema_init(&low_prio, 1);
+    sema_init(&number_lock, 1);
+    sema_init(&wakeup_lock, 1);
     
+    bus_direction = -1;
+    high_num = 0;
+    same_direction = 0;
+    other_direction = 0;
     msg("NOT IMPLEMENTED");
     /* FIXME implement */
 
@@ -117,6 +141,45 @@ void oneTask(task_t task) {
 void getSlot(task_t task) 
 {
     /* FIXME implement */
+  if(task.direction != bus_direction){
+    sema_down(&wakeup_lock);
+    other_direction++;
+    sema_up(&wakeup_lock);
+    sema_down(&bus_inuse);
+
+    sema_down(&number_lock);
+    if(same_direction == 0){
+      bus_direction = task.direction;
+      sema_down(&wakeup_lock);
+      for(int i = 0; i < other_direction-2; i++){
+        sema_up(&bus_inuse);
+        
+      }
+      other_direction = 0;
+      sema_down(&wakeup_lock);
+    }
+    sema_up(&number_lock);
+  }
+  sema_down(&number_lock);
+  same_direction++;
+  sema_up(&number_lock);
+  // number of same direction task
+
+  if(task.priority == HIGH){
+    // disable low prio task
+    sema_down(&high_prio);
+    if(high_num == 0){
+      sema_down(&low_prio);
+    }
+    high_num++;
+    sema_up(&high_prio);
+    sema_down(&bus_timeslot);
+  } else {
+    sema_down(&low_prio);
+    sema_down(&bus_timeslot);
+    sema_up(&low_prio);
+  }
+
 }
 
 /* task processes data on the bus send/receive */
@@ -129,4 +192,21 @@ void transferData(task_t task)
 void leaveSlot(task_t task) 
 {
     /* FIXME implement */
+  if(task.priority == HIGH){
+    sema_down(&high_prio);
+    high_num--;
+    if(high_num == 0){
+      sema_up(&low_prio);
+    }
+    sema_up(&high_prio);
+  }
+  sema_up(&bus_timeslot);
+  sema_down(&number_lock);
+  printf("%d ", task.priority);
+  printf("%d %d\n",task.direction, same_direction);
+  same_direction--;
+
+  if(same_direction == 0 && bus_timeslot.value == BUS_CAPACITY)
+    sema_up(&bus_inuse);
+  sema_up(&number_lock);
 }
