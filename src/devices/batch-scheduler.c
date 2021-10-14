@@ -17,60 +17,49 @@
 // new varibles
 struct semaphore bus_inuse;
 struct semaphore bus_timeslot;
-struct semaphore high_prio;
-struct semaphore low_prio;
-struct semaphore number_lock;
-struct semaphore wakeup_lock;
-
 
 int bus_direction;
 int high_num;
 int same_direction;
 int other_direction;
+long priority_high_waiting = 0;
 /*
  *	initialize task with direction and priority
  *	call o
  * */
-typedef struct {
-	int direction;
-	int priority;
+typedef struct
+{
+    int direction;
+    int priority;
 } task_t;
 
-
 void batchScheduler(unsigned int num_tasks_send, unsigned int num_task_receive,
-        unsigned int num_priority_send, unsigned int num_priority_receive);
+                    unsigned int num_priority_send, unsigned int num_priority_receive);
 
 void senderTask(void *);
 void receiverTask(void *);
 void senderPriorityTask(void *);
 void receiverPriorityTask(void *);
 
+void oneTask(task_t task);      /*Task requires to use the bus and executes methods below*/
+void getSlot(task_t task);      /* task tries to use slot on the bus */
+void transferData(task_t task); /* task processes data on the bus either sending or receiving based on the direction*/
+void leaveSlot(task_t task);    /* task release the slot */
 
-void oneTask(task_t task);/*Task requires to use the bus and executes methods below*/
-	void getSlot(task_t task); /* task tries to use slot on the bus */
-	void transferData(task_t task); /* task processes data on the bus either sending or receiving based on the direction*/
-	void leaveSlot(task_t task); /* task release the slot */
+/* initializes semaphores */
+void init_bus(void)
+{
 
-
-
-/* initializes semaphores */ 
-void init_bus(void){ 
- 
-    random_init((unsigned int)123456789); 
+    random_init((unsigned int)123456789);
     sema_init(&bus_inuse, 1);
     sema_init(&bus_timeslot, BUS_CAPACITY);
-    sema_init(&high_prio, 1);
-    sema_init(&low_prio, 1);
-    sema_init(&number_lock, 1);
-    sema_init(&wakeup_lock, 1);
-    
-    bus_direction = -1;
+
+    bus_direction = 0;
     high_num = 0;
     same_direction = 0;
     other_direction = 0;
-    msg("NOT IMPLEMENTED");
+    //msg("NOT IMPLEMENTED");
     /* FIXME implement */
-
 }
 
 /*
@@ -85,63 +74,89 @@ void init_bus(void){
  */
 
 void batchScheduler(unsigned int num_tasks_send, unsigned int num_task_receive,
-        unsigned int num_priority_send, unsigned int num_priority_receive)
+                    unsigned int num_priority_send, unsigned int num_priority_receive)
 {
     unsigned int i;
     /* create sender threads */
-    for(i = 0; i < num_tasks_send; i++)
+    for (i = 0; i < num_tasks_send; i++)
         thread_create("sender_task", 1, senderTask, NULL);
 
     /* create receiver threads */
-    for(i = 0; i < num_task_receive; i++)
+    for (i = 0; i < num_task_receive; i++)
         thread_create("receiver_task", 1, receiverTask, NULL);
 
     /* create high priority sender threads */
-    for(i = 0; i < num_priority_send; i++)
-       thread_create("prio_sender_task", 1, senderPriorityTask, NULL);
+    for (i = 0; i < num_priority_send; i++)
+        thread_create("prio_sender_task", 1, senderPriorityTask, NULL);
 
     /* create high priority receiver threads */
-    for(i = 0; i < num_priority_receive; i++)
-       thread_create("prio_receiver_task", 1, receiverPriorityTask, NULL);
+    for (i = 0; i < num_priority_receive; i++)
+        thread_create("prio_receiver_task", 1, receiverPriorityTask, NULL);
 }
 
 /* Normal task,  sending data to the accelerator */
-void senderTask(void *aux UNUSED){
-        task_t task = {SENDER, NORMAL};
-        oneTask(task);
+void senderTask(void *aux UNUSED)
+{
+    task_t task = {SENDER, NORMAL};
+    oneTask(task);
 }
 
 /* High priority task, sending data to the accelerator */
-void senderPriorityTask(void *aux UNUSED){
-        task_t task = {SENDER, HIGH};
-        oneTask(task);
+void senderPriorityTask(void *aux UNUSED)
+{
+    task_t task = {SENDER, HIGH};
+    oneTask(task);
 }
 
 /* Normal task, reading data from the accelerator */
-void receiverTask(void *aux UNUSED){
-        task_t task = {RECEIVER, NORMAL};
-        oneTask(task);
+void receiverTask(void *aux UNUSED)
+{
+    task_t task = {RECEIVER, NORMAL};
+    oneTask(task);
 }
 
 /* High priority task, reading data from the accelerator */
-void receiverPriorityTask(void *aux UNUSED){
-        task_t task = {RECEIVER, HIGH};
-        oneTask(task);
+void receiverPriorityTask(void *aux UNUSED)
+{
+    task_t task = {RECEIVER, HIGH};
+    oneTask(task);
 }
 
 /* abstract task execution*/
-void oneTask(task_t task) {
-  getSlot(task);
-  transferData(task);
-  leaveSlot(task);
+void oneTask(task_t task)
+{
+    getSlot(task);
+    transferData(task);
+    leaveSlot(task);
 }
 
-
 /* task tries to get slot on the bus subsystem */
-void getSlot(task_t task) 
+void getSlot(task_t task)
 {
-    /* FIXME implement */
+
+    while (task.direction != bus_direction)
+        ;
+
+    //printf("A task diraction:%d, priority:%d want to getSlot\n", task.direction, task.priority);
+    if (task.priority == HIGH)
+    {
+        priority_high_waiting++;
+    }
+    else
+    {
+        while (priority_high_waiting != 0)
+            ;
+    }
+    sema_down(&bus_timeslot);
+    if (task.priority == HIGH)
+    {
+        priority_high_waiting--;
+    }
+    //printf("Priority: %d Get slot succeed, diraction:%d, remain slot: %d\n", task.priority, task.direction, bus_timeslot.value);
+
+    /*
   if(task.direction != bus_direction){
+    
     sema_down(&wakeup_lock);
     other_direction++;
     sema_up(&wakeup_lock);
@@ -179,34 +194,40 @@ void getSlot(task_t task)
     sema_down(&bus_timeslot);
     sema_up(&low_prio);
   }
-
+  */
 }
 
 /* task processes data on the bus send/receive */
-void transferData(task_t task) 
+void transferData(task_t task)
 {
-    /* FIXME implement */
+    int64_t randomNumber = (int64_t)random_ulong() % 3;
+    randomNumber++;
+    //printf("slee %d \n",randomNumber);
+    timer_sleep(randomNumber);
 }
 
 /* task releases the slot */
-void leaveSlot(task_t task) 
+void leaveSlot(task_t task)
 {
-    /* FIXME implement */
-  if(task.priority == HIGH){
-    sema_down(&high_prio);
-    high_num--;
-    if(high_num == 0){
-      sema_up(&low_prio);
+    //printf("A slot leaved\n");
+    if (bus_timeslot.value < BUS_CAPACITY)
+    {
+        sema_up(&bus_timeslot);
+        //printf("bus timeslot %d\n", bus_timeslot.value);
     }
-    sema_up(&high_prio);
-  }
-  sema_up(&bus_timeslot);
-  sema_down(&number_lock);
-  printf("%d ", task.priority);
-  printf("%d %d\n",task.direction, same_direction);
-  same_direction--;
+    if (bus_timeslot.value >= BUS_CAPACITY)
+    {
+        if (bus_direction == 0)
+        {
 
-  if(same_direction == 0 && bus_timeslot.value == BUS_CAPACITY)
-    sema_up(&bus_inuse);
-  sema_up(&number_lock);
+            bus_direction = 1;
+            //printf("dir changed to %d\n", bus_direction);
+        }
+        else
+        {
+
+            bus_direction = 0;
+            //printf("dir changed to %d\n", bus_direction);
+        }
+    }
 }
