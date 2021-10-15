@@ -15,14 +15,17 @@
 #define HIGH 1
 
 // new varibles
-struct semaphore bus_inuse;
-struct semaphore bus_timeslot;
 
+struct lock bus_direction_lock;
+struct condition bus_direction_cond[2];
+struct condition low_priority_waiting_cond;
+int cars_on_tbe_bus;
 int bus_direction;
 int high_num;
 int same_direction;
 int other_direction;
-long priority_high_waiting = 0;
+int waiters[2];
+int high_priority_waiters = 0;
 /*
  *	initialize task with direction and priority
  *	call o
@@ -51,13 +54,20 @@ void init_bus(void)
 {
 
     random_init((unsigned int)123456789);
-    sema_init(&bus_inuse, 1);
-    sema_init(&bus_timeslot, BUS_CAPACITY);
 
+    lock_init(&bus_direction_lock);
+    cond_init(&low_priority_waiting_cond);
+    cond_init(&bus_direction_cond[0]);
+    cond_init(&bus_direction_cond[1]);
+    waiters[0] = 0;
+    waiters[1] = 0;
+    high_priority_waiters = 0;
     bus_direction = 0;
+    cars_on_tbe_bus = 0;
     high_num = 0;
     same_direction = 0;
     other_direction = 0;
+    cars_on_tbe_bus = 0;
     //msg("NOT IMPLEMENTED");
     /* FIXME implement */
 }
@@ -133,68 +143,41 @@ void oneTask(task_t task)
 /* task tries to get slot on the bus subsystem */
 void getSlot(task_t task)
 {
+    lock_acquire(&bus_direction_lock);
 
-    while (task.direction != bus_direction)
-        ;
-
-    //printf("A task diraction:%d, priority:%d want to getSlot\n", task.direction, task.priority);
-    if (task.priority == HIGH)
+    while (cars_on_tbe_bus >= 3 || (cars_on_tbe_bus != 0 && bus_direction != task.direction))
     {
-        priority_high_waiting++;
-    }
-    else
-    {
-        while (priority_high_waiting != 0)
-            ;
-    }
-    sema_down(&bus_timeslot);
-    if (task.priority == HIGH)
-    {
-        priority_high_waiting--;
-    }
-    //printf("Priority: %d Get slot succeed, diraction:%d, remain slot: %d\n", task.priority, task.direction, bus_timeslot.value);
-
-    /*
-  if(task.direction != bus_direction){
-    
-    sema_down(&wakeup_lock);
-    other_direction++;
-    sema_up(&wakeup_lock);
-    sema_down(&bus_inuse);
-
-    sema_down(&number_lock);
-    if(same_direction == 0){
-      bus_direction = task.direction;
-      sema_down(&wakeup_lock);
-      for(int i = 0; i < other_direction-2; i++){
-        sema_up(&bus_inuse);
         
-      }
-      other_direction = 0;
-      sema_down(&wakeup_lock);
+        if (task.priority == HIGH)
+        {
+            high_priority_waiters++;
+        }
+        else
+        {
+            while (high_priority_waiters > 0)
+            {
+                cond_wait(&low_priority_waiting_cond, &bus_direction_lock);
+            }
+            //printf("Low p %d got, hwaiter:%d\n",task.priority,high_priority_waiters);
+        }
+        waiters[task.direction]++;
+        cond_wait(&bus_direction_cond[task.direction], &bus_direction_lock);
+        waiters[task.direction]--;
+        if (task.priority == HIGH)
+        {
+            high_priority_waiters--;
+        }
+        if (high_priority_waiters == 0)
+        {
+            cond_broadcast(&low_priority_waiting_cond, &bus_direction_lock);
+        }
     }
-    sema_up(&number_lock);
-  }
-  sema_down(&number_lock);
-  same_direction++;
-  sema_up(&number_lock);
-  // number of same direction task
 
-  if(task.priority == HIGH){
-    // disable low prio task
-    sema_down(&high_prio);
-    if(high_num == 0){
-      sema_down(&low_prio);
-    }
-    high_num++;
-    sema_up(&high_prio);
-    sema_down(&bus_timeslot);
-  } else {
-    sema_down(&low_prio);
-    sema_down(&bus_timeslot);
-    sema_up(&low_prio);
-  }
-  */
+    //printf("Got Pri: %d\n", task.priority);
+    cars_on_tbe_bus++;
+    bus_direction = task.direction;
+    lock_release(&bus_direction_lock);
+    return;
 }
 
 /* task processes data on the bus send/receive */
@@ -202,32 +185,22 @@ void transferData(task_t task)
 {
     int64_t randomNumber = (int64_t)random_ulong() % 3;
     randomNumber++;
-    //printf("slee %d \n",randomNumber);
+    //printf("slee %d \n", randomNumber);
     timer_sleep(randomNumber);
 }
 
 /* task releases the slot */
 void leaveSlot(task_t task)
 {
-    //printf("A slot leaved\n");
-    if (bus_timeslot.value < BUS_CAPACITY)
+    lock_acquire(&bus_direction_lock);
+    cars_on_tbe_bus--;
+    if (waiters[bus_direction] > 0)
     {
-        sema_up(&bus_timeslot);
-        //printf("bus timeslot %d\n", bus_timeslot.value);
+        cond_signal(&bus_direction_cond[bus_direction], &bus_direction_lock);
     }
-    if (bus_timeslot.value >= BUS_CAPACITY)
+    else if (cars_on_tbe_bus == 0)
     {
-        if (bus_direction == 0)
-        {
-
-            bus_direction = 1;
-            //printf("dir changed to %d\n", bus_direction);
-        }
-        else
-        {
-
-            bus_direction = 0;
-            //printf("dir changed to %d\n", bus_direction);
-        }
-    }
+        cond_broadcast(&bus_direction_cond[bus_direction], &bus_direction_lock);
+    };
+    lock_release(&bus_direction_lock);
 }
