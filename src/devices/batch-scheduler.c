@@ -143,17 +143,25 @@ void oneTask(task_t task)
 /* task tries to get slot on the bus subsystem */
 void getSlot(task_t task)
 {
+    /* Global lock*/
     lock_acquire(&bus_direction_lock);
 
+    /* Check:
+        1. Is the bridge full? If yes, wait. If no, step 2.
+        2. If not, is it empty? If yes, get on the bridge. If no, step 3.
+        3. If not empty, is the direction of the bridge same with me? If yes, get on the bridge. If not the same, wait.
+    */
     while (cars_on_tbe_bus >= 3 || (cars_on_tbe_bus != 0 && bus_direction != task.direction))
     {
-        
+
+        /* If the task is high priority, mark the waiters of high priorty++*/
         if (task.priority == HIGH)
         {
             high_priority_waiters++;
         }
         else
         {
+            /* For normal priority, it should wait until there have no high priority tasks waiting*/
             while (high_priority_waiters > 0)
             {
                 cond_wait(&low_priority_waiting_cond, &bus_direction_lock);
@@ -165,10 +173,12 @@ void getSlot(task_t task)
         waiters[task.direction]--;
         if (task.priority == HIGH)
         {
+            /* Once a high priority one can get on the bridge, high_priority_waiters--*/
             high_priority_waiters--;
         }
         if (high_priority_waiters == 0)
         {
+            /* Once there have no high priority waiters, notify the normal priority's tasks */
             cond_broadcast(&low_priority_waiting_cond, &bus_direction_lock);
         }
     }
